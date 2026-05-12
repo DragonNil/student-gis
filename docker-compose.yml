@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: student-gis-db
+    environment:
+      POSTGRES_DB: student_gis_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg:/var/lib/postgresql/data
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d student_gis_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - student-gis-network
+
+  # docker-compose.yml (фрагмент для backend)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: student-gis-api
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      # 👇 Явно передаём переменные из .env файла
+      - DATABASE_URL=${DATABASE_URL:-postgresql://user:password@postgres:5432/student_gis_db}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=student_gis_db
+      - DB_USER=user
+      - DB_PASSWORD=password
+      - YANDEX_MAPS_API_KEY=${YANDEX_MAPS_API_KEY}
+      - JWT_SECRET=${JWT_SECRET:-change_me_in_production}
+      - CORS_ORIGIN=http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app:delegated
+      - /app/node_modules
+      - /app/dist
+    networks:
+      - student-gis-network
+    command: sh -c "yarn db:init:prod && node dist/app.js"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # docker-compose.yml (фрагмент frontend)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: student-gis-web
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_BASE_URL=/api  # Относительный путь для nginx proxy
+      - VITE_YANDEX_MAPS_API_KEY=${YANDEX_MAPS_API_KEY}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - student-gis-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+volumes:
+  pg:
+    driver: local
+
+networks:
+  student-gis-network:
+    driver: bridge

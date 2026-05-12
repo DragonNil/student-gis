@@ -1,0 +1,89 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [38.929095, 47.206678]
+      },
+      "properties": {
+        "id": 1,
+        "name": "Общежитие ЮФУ №3",
+        "type": "dormitory",
+        "address": "ул. Чехова, 22",
+        "capacity": 450,
+        "yearBuilt": 1975,
+        "last_update": "2026-02-01"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [38.934843, 47.203254]
+      },
+      "properties": {
+        "id": 2,
+        "name": "Учебный корпус ЮФУ (Инженерный)",
+        "type": "university",
+        "address": "ул. Шевченко, 2",
+        "faculties": ["ИКТАИБ", "ИКТИБ"],
+        "working_hours": "пн-пт 08:00-18:00",
+        "phone": "+7 (8634) 60-00-00",
+        "last_update": "2026-03-15"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [38.938100, 47.211200]
+      },
+      "properties": {
+        "id": 3,
+        "name": "Столовая 'Центральная'",
+        "type": "canteen",
+        "address": "ул. Петровская, 58",
+        "working_hours": "08:00-17:00",
+        "cuisine": "домашняя",
+        "last_update": "2026-04-01"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [38.925500, 47.215800]
+      },
+      "properties": {
+        "id": 4,
+        "name": "Спорткомплекс 'Юность'",
+        "type": "sport",
+        "address": "ул. Дзержинского, 10",
+        "sportType": "бассейн, тренажёрный зал",
+        "working_hours": "07:00-22:00",
+        "last_update": "2026-03-20"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [38.932000, 47.209000]
+      },
+      "properties": {
+        "id": 5,
+        "name": "Копицентр 'Принт-Таг'",
+        "type": "copy_center",
+        "address": "пер. Гоголевский, 4",
+        "services": ["печать", "ксерокопия", "ламинация", "переплёт"],
+        "price_black_white": 5,
+        "price_color": 25,
+        "has_self_service": false,
+        "working_hours": "09:00-19:00",
+        "last_update": "2026-04-10"
+      }
+    }
+  ]
+}
