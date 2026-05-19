@@ -3,35 +3,44 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Копируем только package-файлы сначала (для кэширования зависимостей)
+# Copy package files first for caching
 COPY package*.json yarn.lock* ./
 
-# Устанавливаем зависимости
-RUN yarn install --frozen-lockfile --ignore-scripts
+# Install dependencies
+RUN yarn install --frozen-lockfile --production=false
 
-# Копируем исходный код
+# Copy source
 COPY . .
 
-# Создаём .env с дефолтными значениями для сборки (если не передан)
-# Это предотвратит падение сборки из-за отсутствия VITE_ переменных
-RUN if [ ! -f .env ]; then \
-    echo "VITE_API_BASE_URL=http://localhost:4000/api" > .env; \
-    echo "VITE_YANDEX_MAPS_API_KEY=dummy_key_for_build" >> .env; \
+# Create .env.production if not exists
+RUN if [ ! -f .env.production ]; then \
+    echo "VITE_API_BASE_URL=/api" > .env.production; \
     fi
 
-# Собираем приложение (игнорируем ошибки типов для продакшн-сборки)
-RUN yarn build
+# Build arguments for environment variables
+ARG VITE_API_BASE_URL=/api
+ARG VITE_YANDEX_MAPS_API_KEY=
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ENV VITE_YANDEX_MAPS_API_KEY=${VITE_YANDEX_MAPS_API_KEY}
 
-# Production stage
+# Build the app
+RUN yarn build --mode production
+
+# === Production stage ===
 FROM nginx:alpine
 
-# Копируем собранные файлы
+# Copy built files
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Копируем nginx конфиг
+# Copy nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Healthcheck для Docker Compose
+# Create non-root user
+RUN addgroup -g 1001 -S nginx && \
+    adduser -S nginx -u 1001 -G nginx
+USER nginx
+
+# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost/ || exit 1
 

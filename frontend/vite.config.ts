@@ -5,7 +5,6 @@ import path from 'path'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_')
-  const isDocker = process.env.DOCKER === 'true'
   
   return {
     plugins: [react()],
@@ -19,19 +18,19 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: true,
-      // 🔧 Проксирование API-запросов на бэкенд в режиме разработки
+      // Проксирование для локальной разработки
       proxy: {
         '/api': {
           target: 'http://localhost:4000',
           changeOrigin: true,
           secure: false,
-          rewrite: (path) => path.replace(/^\/api/, '/api'),
         },
       },
     },
     build: {
       outDir: 'dist',
       sourcemap: false,
+      minify: 'terser',
     },
   }
 })

@@ -1,89 +1,120 @@
+# docker-compose.yml
 version: '3.8'
 
 services:
+  # === PostgreSQL + PostGIS ===
   postgres:
     image: postgis/postgis:15-3.3
-    container_name: student-gis-db
+    container_name: gis-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: student_gis_db
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: /var/lib/postgresql/data/pgdata
-    ports:
-      - "5432:5432"
     volumes:
-      - pg:/var/lib/postgresql/data
-      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d student_gis_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - student-gis-network
+      - gis-network
+    command: [
+      "postgres",
+      "-c", "max_connections=50",
+      "-c", "shared_buffers=256MB",
+      "-c", "effective_cache_size=768MB"
+    ]
 
-  # docker-compose.yml (фрагмент для backend)
+  # === Backend (Node.js + Express) ===
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: student-gis-api
-    ports:
-      - "4000:4000"
+    container_name: gis-backend
+    restart: unless-stopped
     environment:
       - NODE_ENV=production
-      - PORT=4000
-      # 👇 Явно передаём переменные из .env файла
-      - DATABASE_URL=${DATABASE_URL:-postgresql://user:password@postgres:5432/student_gis_db}
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=student_gis_db
-      - DB_USER=user
-      - DB_PASSWORD=password
+      - PORT=${PORT}
+      - DATABASE_URL=${DATABASE_URL}
       - YANDEX_MAPS_API_KEY=${YANDEX_MAPS_API_KEY}
-      - JWT_SECRET=${JWT_SECRET:-change_me_in_production}
-      - CORS_ORIGIN=http://localhost:3000
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ORIGIN=${CORS_ORIGIN}
+    volumes:
+      - ./backend/logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ./backend:/app:delegated
-      - /app/node_modules
-      - /app/dist
     networks:
-      - student-gis-network
-    command: sh -c "yarn db:init:prod && node dist/app.js"
+      - gis-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/api/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${PORT}/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3
 
-  # docker-compose.yml (фрагмент frontend)
+  # === Frontend (React + Vite + Nginx) ===
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: student-gis-web
-    ports:
-      - "3000:80"
-    environment:
-      - VITE_API_BASE_URL=/api  # Относительный путь для nginx proxy
-      - VITE_YANDEX_MAPS_API_KEY=${YANDEX_MAPS_API_KEY}
+      args:
+        - VITE_API_BASE_URL=/api
+        - VITE_YANDEX_MAPS_API_KEY=${YANDEX_MAPS_API_KEY}
+    container_name: gis-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     networks:
-      - student-gis-network
+      - gis-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
       interval: 30s
       timeout: 3s
       retries: 3
+
+  # === Nginx (Reverse Proxy + SSL) ===
+  nginx:
+    image: nginx:alpine
+    container_name: gis-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+      - certbot-data:/var/www/certbot
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - gis-network
+
+  # === Certbot (Auto-renew SSL) ===
+  certbot:
+    image: certbot/certbot:latest
+    container_name: gis-certbot
+    restart: unless-stopped
+    volumes:
+      - ./nginx/ssl:/etc/letsencrypt:rw
+      - certbot-data:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - gis-network
+
 volumes:
-  pg:
-    driver: local
+  pgdata:
+  certbot-data:
 
 networks:
-  student-gis-network:
+  gis-network:
     driver: bridge
