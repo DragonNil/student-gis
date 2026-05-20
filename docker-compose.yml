@@ -1,37 +1,29 @@
-# docker-compose.yml
 version: '3.8'
 
 services:
-  # === PostgreSQL + PostGIS ===
+  # === База данных ===
   postgres:
     image: postgis/postgis:15-3.3
     container_name: gis-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: gisuser
+      POSTGRES_PASSWORD: rtbrt4mbo34p5b3
+      POSTGRES_DB: student_gis_db
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U gisuser -d student_gis_db"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - gis-network
-    command: [
-      "postgres",
-      "-c", "max_connections=50",
-      "-c", "shared_buffers=256MB",
-      "-c", "effective_cache_size=768MB"
-    ]
 
-  # === Backend (Node.js + Express) ===
+  # === Бэкенд (Node.js) ===
   backend:
     build:
       context: ./backend
@@ -40,36 +32,32 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
-      - PORT=${PORT}
-      - DATABASE_URL=${DATABASE_URL}
-      - YANDEX_MAPS_API_KEY=${YANDEX_MAPS_API_KEY}
-      - JWT_SECRET=${JWT_SECRET}
-      - CORS_ORIGIN=${CORS_ORIGIN}
-    volumes:
-      - ./backend/logs:/app/logs
+      - PORT=4000
+      - DATABASE_URL=postgresql://gisuser:rtbrt4mbo34p5b3@postgres:5432/student_gis_db
+      - YANDEX_MAPS_API_KEY=8ea7d884-6708-4459-8032-556d2eb89a65
+      - JWT_SECRET=your_super_secure_jwt_secret
+      - CORS_ORIGIN=http://localhost:3000,http://localhost,http://212.67.13.100
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - gis-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${PORT}/api/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3
 
-  # === Frontend (React + Vite + Nginx) ===
+  # === Фронтенд (React + внутренний Nginx) ===
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        - VITE_API_BASE_URL=/api
-        - VITE_YANDEX_MAPS_API_KEY=${YANDEX_MAPS_API_KEY}
     container_name: gis-frontend
     restart: unless-stopped
-    expose:
-      - "80"
+    # 👇 Синтаксис списка с дефисом:
+    ports:
+      - "3000:80"
     depends_on:
       - backend
     networks:
@@ -80,7 +68,7 @@ services:
       timeout: 3s
       retries: 3
 
-  # === Nginx (Reverse Proxy + SSL) ===
+  # === Главный Nginx (Reverse Proxy) ===
   nginx:
     image: nginx:alpine
     container_name: gis-nginx
@@ -92,14 +80,13 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
       - ./nginx/logs:/var/log/nginx
-      - certbot-data:/var/www/certbot
     depends_on:
       - frontend
       - backend
     networks:
       - gis-network
 
-  # === Certbot (Auto-renew SSL) ===
+  # === Certbot (SSL сертификаты) ===
   certbot:
     image: certbot/certbot:latest
     container_name: gis-certbot
