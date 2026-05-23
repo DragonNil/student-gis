@@ -1,15 +1,13 @@
 # Dependencies
-*/node_modules/
+node_modules/
 
-backend/node_modules
-frontend/node_modules
 # Build outputs
 dist/
 build/
 *.tsbuildinfo
 
 # Environment (ВАЖНО: не коммитьте .env!)
-*.env
+.env
 .env.local
 .env*.local
 !.env.example
@@ -39,3 +37,5 @@ Thumbs.db
 # Database backups
 *.sql.gz
 backups/
+
+nginx/ssl/

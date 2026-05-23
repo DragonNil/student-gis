@@ -1,29 +1,23 @@
-version: '3.8'
-
 services:
-  # === База данных ===
   postgres:
     image: postgis/postgis:15-3.3
     container_name: gis-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: gisuser
-      POSTGRES_PASSWORD: rtbrt4mbo34p5b3
-      POSTGRES_DB: student_gis_db
-      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_USER: "gisuser"
+      POSTGRES_PASSWORD: "Fefewgg444fk"
+      POSTGRES_DB: "student_gis_db"
     volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:5432:5432"
+      - "pgdata:/var/lib/postgresql/data"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gisuser -d student_gis_db"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
     networks:
       - gis-network
 
-  # === Бэкенд (Node.js) ===
   backend:
     build:
       context: ./backend
@@ -31,44 +25,28 @@ services:
     container_name: gis-backend
     restart: unless-stopped
     environment:
-      - NODE_ENV=production
-      - PORT=4000
-      - DATABASE_URL=postgresql://gisuser:rtbrt4mbo34p5b3@postgres:5432/student_gis_db
-      - YANDEX_MAPS_API_KEY=8ea7d884-6708-4459-8032-556d2eb89a65
-      - JWT_SECRET=your_super_secure_jwt_secret
-      - CORS_ORIGIN=http://localhost:3000,http://localhost,http://212.67.13.100
+      - "NODE_ENV=production"
+      - "DATABASE_URL=postgresql://gisuser:Fefewgg444fk@postgres:5432/student_gis_db"
+      - "YANDEX_MAPS_API_KEY=8ea7d884-6708-4459-8032-556d2eb89a65"
+      - "JWT_SECRET=your_secret_min_32_chars"
+      - "CORS_ORIGIN=http://localhost:3000,https://student-gis.ru"
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - gis-network
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/api/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
 
-  # === Фронтенд (React + внутренний Nginx) ===
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: gis-frontend
     restart: unless-stopped
-    # 👇 Синтаксис списка с дефисом:
     ports:
       - "3000:80"
-    depends_on:
-      - backend
     networks:
       - gis-network
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
 
-  # === Главный Nginx (Reverse Proxy) ===
   nginx:
     image: nginx:alpine
     container_name: gis-nginx
@@ -77,24 +55,22 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-      - ./nginx/logs:/var/log/nginx
+      - "./nginx/conf.d:/etc/nginx/conf.d:ro"
+      - "./nginx/ssl:/etc/letsencrypt:ro"
+      - "certbot-data:/var/www/certbot"
     depends_on:
       - frontend
       - backend
     networks:
       - gis-network
 
-  # === Certbot (SSL сертификаты) ===
   certbot:
     image: certbot/certbot:latest
     container_name: gis-certbot
     restart: unless-stopped
     volumes:
-      - ./nginx/ssl:/etc/letsencrypt:rw
-      - certbot-data:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+      - "./nginx/ssl:/etc/letsencrypt:rw"
+      - "certbot-data:/var/www/certbot"
     networks:
       - gis-network
 
