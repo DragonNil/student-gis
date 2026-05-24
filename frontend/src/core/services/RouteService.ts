@@ -44,6 +44,17 @@ export class RouteService {
     return mapping[mode];
   }
 
+  // Безопасная конвертация секунд в читаемый вид
+  private formatTime(seconds: number): string {
+    if (!seconds || seconds <= 0) return '—';
+    if (seconds < 60) return `${Math.round(seconds)} сек`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)} мин`;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.round((seconds % 3600) / 60);
+    return m > 0 ? `${h} ч ${m} мин` : `${h} ч`;
+  }
+
+  // Безопасная конвертация метров в читаемый вид
   private formatDistance(meters: number): string {
     if (!meters || meters <= 0) return '—';
     if (meters < 1000) return `${Math.round(meters)} м`;
@@ -69,58 +80,80 @@ export class RouteService {
       const ymaps = window.ymaps;
       const rtt = this.mapMode(req.mode);
 
-      ymaps.route([req.from, req.to], { routingMode: rtt, results: 3, avoidFees: false, avoidTolls: false })
+      console.log(`🗺️ Запрос маршрута [${req.mode}]:`, { from: req.from, to: req.to });
+
+      ymaps.route(
+        [req.from, req.to], 
+        { routingMode: rtt, results: 3, avoidFees: false, avoidTolls: false }
+      )
         .then((route: any) => {
+          console.log('✅ Ответ получен от Яндекс');
           const routes = route.getRoutes?.() || [route];
           if (!routes || routes.length === 0) return reject(new Error('Маршруты не найдены.'));
 
-          const options: RouteOption[] = routes.map((r: any, idx: number) => {
+          const options: RouteOption[] = [];
+
+          routes.forEach((r: any, idx: number) => {
             try {
               const path = r.getPaths?.()?.get(0);
-              if (!path) return null;
+              if (!path) return;
 
+              // 1. Геометрия
               const coords: [number, number][] = [];
-              for (let i = 0; i < path.geometry.getLength(); i++) {
+              const geoLen = path.geometry.getLength();
+              for (let i = 0; i < geoLen; i++) {
                 const [lat, lon] = path.geometry.get(i);
                 coords.push([lon, lat]);
               }
 
-              // 🔥 Нативные методы API учитывают режим маршрутизации
-              const timeSeconds = r.getTime?.() || 0;
+              // 2. Время и Расстояние (используем нативные методы API, они точные!)
+              // Для авто берем время с учетом пробок, если есть, иначе обычное
+              let timeSec = r.getTime?.() || 0;
+              if (req.mode === 'auto') {
+                 timeSec = r.getJamsTime?.() || timeSec;
+              }
               const distMeters = r.getLength?.() || 0;
-              
-              // Для авто используем время с пробками, если доступно
-              const accurateTime = req.mode === 'auto' ? (r.getJamsTime?.() || timeSeconds) : timeSeconds;
 
+              // 3. Данные для ОТ (безопасный парсинг, без .getLength() на сегментах)
               let transfers = 0;
               let transport_info = '';
               let departure_stop = '';
 
               if (req.mode === 'public_transport') {
                 const paths = r.getPaths?.();
-                if (paths?.getLength) {
-                  transfers = Math.max(0, paths.getLength() - 1);
-                  const segments = paths.get(0).getSegments?.();
-                  if (segments) {
-                    for (let i = 0; i < segments.getLength(); i++) {
-                      const seg = segments.get(i);
-                      const meta = seg.getMetadata?.() || {};
-                      if (meta.type === 'transit') {
-                        const t = meta.transport || {};
-                        transport_info = t.name || t.type || 'Общественный транспорт';
-                        departure_stop = meta.departureStop || meta.departure?.name || 'Остановка не определена';
-                        break;
+                if (paths && paths.getLength) {
+                   // Количество пересадок = количество путей - 1
+                   transfers = Math.max(0, paths.getLength() - 1);
+                   
+                   // Пытаемся найти инфо о транспорте (безопасно)
+                   try {
+                      const firstPath = paths.get(0);
+                      const segments = firstPath.getSegments?.();
+                      if (segments) {
+                         // segments может быть коллекцией или массивом
+                         const segCount = segments.getLength ? segments.getLength() : segments.length;
+                         for(let i=0; i<segCount; i++) {
+                            const seg = segments.get ? segments.get(i) : segments[i];
+                            const meta = seg.getMetadata?.();
+                            if (meta && meta.type === 'transit') {
+                               transport_info = meta.transport?.name || 'Общественный транспорт';
+                               departure_stop = meta.departureStop || 'Остановка';
+                               break; 
+                            }
+                         }
                       }
-                    }
-                  }
+                   } catch (e) {
+                      // Если Яндекс не отдал детали - не страшно, просто оставляем пусто
+                      console.log('ℹ️ Детали ОТ недоступны в бесплатной версии');
+                   }
                 }
               }
 
-              return {
+              options.push({
                 id: `route_${Date.now()}_${req.mode}_${idx}`,
-                time: r.getHumanTime?.() || `${Math.round(accurateTime / 60)} мин`,
-                distance: r.getHumanLength?.() || this.formatDistance(distMeters),
-                time_seconds: accurateTime,
+                time: this.formatTime(timeSec),
+                distance: this.formatDistance(distMeters),
+                time_seconds: timeSec,
                 distance_meters: distMeters,
                 geometry: { type: 'LineString' as const, coordinates: coords },
                 steps: [],
@@ -130,12 +163,12 @@ export class RouteService {
                 transport_info: transport_info || undefined,
                 departure_stop: departure_stop || undefined,
                 api_limitation: req.mode === 'public_transport',
-              };
+              });
+
             } catch (err) {
-              console.error('❌ Error parsing route option:', err);
-              return null;
+              console.error(`❌ Ошибка при обработке варианта ${idx}:`, err);
             }
-          }).filter((opt: RouteOption | null): opt is RouteOption => opt !== null);
+          });
 
           if (options.length === 0) return reject(new Error('Не удалось обработать варианты маршрута'));
           resolve({ options, selected_index: 0 });
