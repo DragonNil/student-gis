@@ -1,5 +1,4 @@
 // frontend/src/core/services/RouteService.ts
-
 export type RoutingMode = 'pedestrian' | 'auto' | 'public_transport';
 
 export interface RouteRequest {
@@ -21,7 +20,7 @@ export interface RouteOption {
   transfers: number;
   transport_info?: string;
   departure_stop?: string;
-  api_limitation?: boolean; // 👈 Флаг для UI
+  api_limitation?: boolean;
 }
 
 export interface RouteResponse {
@@ -43,15 +42,6 @@ export class RouteService {
       public_transport: 'masstransit',
     };
     return mapping[mode];
-  }
-
-  private formatTime(seconds: number): string {
-    if (!seconds || seconds <= 0) return '—';
-    if (seconds < 60) return `${Math.round(seconds)} сек`;
-    if (seconds < 3600) return `${Math.round(seconds / 60)} мин`;
-    const h = Math.floor(seconds / 3600);
-    const m = Math.round((seconds % 3600) / 60);
-    return m > 0 ? `${h} ч ${m} мин` : `${h} ч`;
   }
 
   private formatDistance(meters: number): string {
@@ -79,18 +69,8 @@ export class RouteService {
       const ymaps = window.ymaps;
       const rtt = this.mapMode(req.mode);
 
-      console.log('🗺️ Building route:', { from: req.from, to: req.to, mode: req.mode, rtt });
-
-      ymaps.route(
-        [req.from, req.to],
-        { routingMode: rtt, results: 3, avoidFees: false, avoidTolls: false }
-      )
+      ymaps.route([req.from, req.to], { routingMode: rtt, results: 3, avoidFees: false, avoidTolls: false })
         .then((route: any) => {
-          console.log('✅ Route response received');
-          
-          // 📊 Отладка: посмотрите, что реально отдает Яндекс в консоли
-          console.log('🔍 Raw route metadata:', route.getMetadata?.());
-          
           const routes = route.getRoutes?.() || [route];
           if (!routes || routes.length === 0) return reject(new Error('Маршруты не найдены.'));
 
@@ -105,37 +85,51 @@ export class RouteService {
                 coords.push([lon, lat]);
               }
 
-              const timeSec = r.getJamsTime?.() || r.getTime?.() || 0;
-              const distM = r.getLength?.() || 0;
+              // 🔥 Нативные методы API учитывают режим маршрутизации
+              const timeSeconds = r.getTime?.() || 0;
+              const distMeters = r.getLength?.() || 0;
+              
+              // Для авто используем время с пробками, если доступно
+              const accurateTime = req.mode === 'auto' ? (r.getJamsTime?.() || timeSeconds) : timeSeconds;
 
               let transfers = 0;
               let transport_info = '';
               let departure_stop = '';
 
               if (req.mode === 'public_transport') {
-                // В бесплатном API v2.1 детали ОТ не экспонируются
-                // Но мы можем рассчитать количество пересадок по сегментам
                 const paths = r.getPaths?.();
                 if (paths?.getLength) {
-                  const segmentsCount = paths.getLength();
-                  transfers = Math.max(0, segmentsCount - 1);
+                  transfers = Math.max(0, paths.getLength() - 1);
+                  const segments = paths.get(0).getSegments?.();
+                  if (segments) {
+                    for (let i = 0; i < segments.getLength(); i++) {
+                      const seg = segments.get(i);
+                      const meta = seg.getMetadata?.() || {};
+                      if (meta.type === 'transit') {
+                        const t = meta.transport || {};
+                        transport_info = t.name || t.type || 'Общественный транспорт';
+                        departure_stop = meta.departureStop || meta.departure?.name || 'Остановка не определена';
+                        break;
+                      }
+                    }
+                  }
                 }
               }
 
               return {
                 id: `route_${Date.now()}_${req.mode}_${idx}`,
-                time: this.formatTime(timeSec),
-                distance: this.formatDistance(distM),
-                time_seconds: timeSec,
-                distance_meters: distM,
+                time: r.getHumanTime?.() || `${Math.round(accurateTime / 60)} мин`,
+                distance: r.getHumanLength?.() || this.formatDistance(distMeters),
+                time_seconds: accurateTime,
+                distance_meters: distMeters,
                 geometry: { type: 'LineString' as const, coordinates: coords },
                 steps: [],
-                share_link: `https://yandex.ru/maps/?rtext=${req.from[0]},${req.from[1]}~${req.to[0]},${req.to[1]}&rtt=mt`,
+                share_link: `https://yandex.ru/maps/?rtext=${req.from[0]},${req.from[1]}~${req.to[0]},${req.to[1]}&rtt=${rtt}`,
                 label: this.getLabel(req.mode, idx),
                 transfers,
                 transport_info: transport_info || undefined,
                 departure_stop: departure_stop || undefined,
-                api_limitation: true, // 👈 Включаем профессиональный фолбэк
+                api_limitation: req.mode === 'public_transport',
               };
             } catch (err) {
               console.error('❌ Error parsing route option:', err);
