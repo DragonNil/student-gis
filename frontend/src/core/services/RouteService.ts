@@ -14,10 +14,10 @@ export interface RouteOption {
   distance: string;
   time_seconds: number;
   distance_meters: number;
-  geometry: { type: 'LineString'; coordinates: [number, number][] }; // [lon, lat]
+  geometry: { type: 'LineString'; coordinates: [number, number][] };
   steps: Array<{ instruction: string; distance: string; time: string }>;
   share_link: string;
-  label: string; // "Быстрый", "Альтернативный", "Минимум пересадок" и т.д.
+  label: string;
 }
 
 export interface RouteResponse {
@@ -26,12 +26,17 @@ export interface RouteResponse {
 }
 
 export class RouteService {
+  private readonly apiKey: string;
+
+  constructor(apiKey?: string) {
+    this.apiKey = apiKey || (typeof import.meta !== 'undefined' ? import.meta.env.VITE_YANDEX_MAPS_API_KEY : '') || '';
+  }
+
   private mapMode(mode: RoutingMode): string {
-    // Yandex Maps JS API routingMode значения:
     const mapping: Record<RoutingMode, string> = {
       pedestrian: 'pedestrian',
       auto: 'auto',
-      public_transport: 'masstransit', // или 'pt' в старых версиях
+      public_transport: 'masstransit',
     };
     return mapping[mode];
   }
@@ -52,13 +57,9 @@ export class RouteService {
     return `${km.toFixed(1).replace(/\.0$/, '')} км`;
   }
 
-  /** Надёжно убирает &#160;, &nbsp; и другие спецсимволы */
   private cleanText(text: string): string {
     if (!text) return '—';
-    return text
-      .replace(/&#160;|&nbsp;|\u00A0/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    return text.replace(/&#160;|&nbsp;|\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
   private getLabel(mode: RoutingMode, index: number): string {
@@ -73,56 +74,73 @@ export class RouteService {
   async buildRoute(req: RouteRequest): Promise<RouteResponse> {
     return new Promise((resolve, reject) => {
       // @ts-ignore
-      if (!window.ymaps) return reject(new Error('Yandex Maps API не загружен'));
+      if (!window.ymaps) {
+        console.error('❌ Yandex Maps API not loaded');
+        return reject(new Error('Yandex Maps API не загружен'));
+      }
 
       // @ts-ignore
       const ymaps = window.ymaps;
       const rtt = this.mapMode(req.mode);
 
+      console.log('🗺️ Building route:', { from: req.from, to: req.to, mode: req.mode, rtt });
+
       ymaps.route(
-        [
-          [req.from[0], req.from[1]], // [lat, lon]
-          [req.to[0], req.to[1]],
-        ],
-        {
-          routingMode: rtt,
-          results: 3, // 👇 Запрашиваем до 3 вариантов
-        }
+        [req.from, req.to],
+        { routingMode: rtt, results: 3, avoidFees: false, avoidTolls: false }
       )
         .then((route: any) => {
+          console.log('✅ Route response received');
           const routes = route.getRoutes?.() || [route];
-          if (!routes.length) return reject(new Error('Маршруты не найдены'));
+          console.log('🗺️ Routes count:', routes.length);
+
+          if (!routes || routes.length === 0) {
+            return reject(new Error('Маршруты не найдены. Попробуйте выбрать точки ближе друг к другу.'));
+          }
 
           const options: RouteOption[] = routes.map((r: any, idx: number) => {
-            const path = r.getPaths?.()?.get(0);
-            if (!path) return null;
+            try {
+              const path = r.getPaths?.()?.get(0);
+              if (!path) return null;
 
-            const coords: [number, number][] = [];
-            for (let i = 0; i < path.geometry.getLength(); i++) {
-              const [lat, lon] = path.geometry.get(i);
-              coords.push([lon, lat]); // GeoJSON требует [lon, lat]
+              const coords: [number, number][] = [];
+              for (let i = 0; i < path.geometry.getLength(); i++) {
+                const [lat, lon] = path.geometry.get(i);
+                coords.push([lon, lat]);
+              }
+
+              const timeSec = r.getJamsTime?.() || r.getTime?.() || 0;
+              const distM = r.getLength?.() || 0;
+
+              return {
+                id: `route_${Date.now()}_${req.mode}_${idx}`,
+                time: this.formatTime(timeSec),
+                distance: this.formatDistance(distM),
+                time_seconds: timeSec,
+                distance_meters: distM,
+                geometry: { type: 'LineString' as const, coordinates: coords },
+                steps: [],
+                share_link: `https://yandex.ru/maps/?rtext=${req.from[0]},${req.from[1]}~${req.to[0]},${req.to[1]}&rtt=${rtt}`,
+                label: this.getLabel(req.mode, idx),
+              };
+            } catch (err) {
+              console.error('❌ Error parsing route option:', err);
+              return null;
             }
+          }).filter((opt: RouteOption | null): opt is RouteOption => opt !== null);
 
-            const timeSec = r.getJamsTime?.() || r.getTime?.() || 0;
-            const distM = r.getLength?.() || 0;
+          console.log('🗺️ Parsed options:', options.length);
 
-            return {
-              id: `route_${Date.now()}_${req.mode}_${idx}`,
-              time: this.formatTime(timeSec),
-              distance: this.formatDistance(distM),
-              time_seconds: timeSec,
-              distance_meters: distM,
-              geometry: { type: 'LineString' as const, coordinates: coords },
-              steps: [],
-              share_link: `https://yandex.ru/maps/?rtext=${req.from[0]},${req.from[1]}~${req.to[0]},${req.to[1]}&rtt=${rtt}`,
-              label: this.getLabel(req.mode, idx),
-            };
-          }).filter(Boolean);
+          if (options.length === 0) {
+            return reject(new Error('Не удалось обработать варианты маршрута'));
+          }
 
-          if (!options.length) return reject(new Error('Не удалось получить варианты'));
           resolve({ options, selected_index: 0 });
         })
-        .catch((err: any) => reject(new Error(err.message || 'Ошибка построения маршрута')));
+        .catch((err: any) => {
+          console.error('❌ Yandex route error:', err);
+          reject(new Error(err.message || 'Не удалось построить маршрут'));
+        });
     });
   }
 }
