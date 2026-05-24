@@ -37,3 +37,4 @@ Thumbs.db
 # Database backups
 *.sql.gz
 backups/
+nginx/ssl/

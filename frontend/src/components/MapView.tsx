@@ -99,6 +99,7 @@ export default function MapView({
   }, [features, activeLayers, isInitialized]);
 
   // 3. Маршрут
+ 
   useEffect(() => {
     if (!mapInstanceRef.current || !routeGeometry) return;
     
@@ -125,7 +126,10 @@ export default function MapView({
     mapInstanceRef.current.geoObjects.add(polyline);
     routePolylineRef.current = polyline;
     
-    mapInstanceRef.current.setBounds(coords, { checkZoomRange: true, padding: [50, 50, 50, 50] });
+    // 🔥 УДАЛЕНО: mapInstanceRef.current.setBounds(...)
+    // Карта больше не будет автоматически менять зум и центр при построении маршрута.
+    // Если нужно мягко сместить центр к началу маршрута без изменения зума:
+    // mapInstanceRef.current.panTo(coords[0], { duration: 400, fly: true });
     
     return () => {
       if (routePolylineRef.current) {
@@ -134,7 +138,7 @@ export default function MapView({
       }
     };
   }, [routeGeometry, currentMode]);
-
+  
   // 4. Изохроны
   useEffect(() => {
     if (!mapInstanceRef.current || !isochroneGeoJSON) return;

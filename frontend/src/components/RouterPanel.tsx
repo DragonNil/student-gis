@@ -38,6 +38,9 @@ export default function RoutePanel({
     return txt.value;
   };
 
+  const selectedOption = routeResult?.options?.[selectedIdx];
+  const isPT = currentMode === 'public_transport' && selectedOption;
+
   return (
     <div style={{ background: '#fff', borderRadius: '8px', padding: '16px', marginTop: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
       <h3 style={{ margin: '0 0 12px', fontSize: '16px', fontWeight: 600 }}>🧭 Построение маршрута</h3>
@@ -85,6 +88,25 @@ export default function RoutePanel({
               {idx === selectedIdx && <span style={{ fontSize: '16px', color: '#0057FF' }}>→</span>}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* 🚌 Профессиональный блок информации об ОТ */}
+      {isPT && (
+        <div style={{ background: '#fffbeb', padding: '10px 12px', borderRadius: '6px', border: '1px solid #fcd34d', marginBottom: '12px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#92400e', marginBottom: '6px' }}>🚌 Информация об ОТ:</div>
+          <div style={{ fontSize: '12px', color: '#78350f', lineHeight: 1.5 }}>
+            {selectedOption?.departure_stop && <div>📍 Отправление: <strong>{selectedOption.departure_stop}</strong></div>}
+            {selectedOption?.transport_info && <div>🚌 Транспорт: <strong>{selectedOption.transport_info}</strong></div>}
+            <div>🔄 Пересадок: <strong>{selectedOption?.transfers ?? 0}</strong></div>
+            
+            {/* 👇 Профессиональное пояснение ограничения API */}
+            {selectedOption?.api_limitation && (
+              <div style={{ marginTop: '6px', padding: '6px', background: '#fef3c7', borderRadius: '4px', fontSize: '11px', color: '#92400e', lineHeight: 1.4 }}>
+                ℹ️ <strong>Примечание:</strong> Детализация остановок и номеров транспорта доступна в платной версии API Яндекс.Маршрутизации. В текущей версии строится оптимальный маршрут с учётом пересадок и времени в пути.
+              </div>
+            )}
+          </div>
         </div>
       )}
 

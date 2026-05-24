@@ -3,7 +3,7 @@
 export type RoutingMode = 'pedestrian' | 'auto' | 'public_transport';
 
 export interface RouteRequest {
-  from: [number, number]; // [lat, lon]
+  from: [number, number];
   to: [number, number];
   mode: RoutingMode;
 }
@@ -18,6 +18,10 @@ export interface RouteOption {
   steps: Array<{ instruction: string; distance: string; time: string }>;
   share_link: string;
   label: string;
+  transfers: number;
+  transport_info?: string;
+  departure_stop?: string;
+  api_limitation?: boolean; // 👈 Флаг для UI
 }
 
 export interface RouteResponse {
@@ -57,11 +61,6 @@ export class RouteService {
     return `${km.toFixed(1).replace(/\.0$/, '')} км`;
   }
 
-  private cleanText(text: string): string {
-    if (!text) return '—';
-    return text.replace(/&#160;|&nbsp;|\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
-  }
-
   private getLabel(mode: RoutingMode, index: number): string {
     const labels: Record<RoutingMode, string[]> = {
       pedestrian: ['Пешком', 'Альтернативный', 'Длинный'],
@@ -74,10 +73,7 @@ export class RouteService {
   async buildRoute(req: RouteRequest): Promise<RouteResponse> {
     return new Promise((resolve, reject) => {
       // @ts-ignore
-      if (!window.ymaps) {
-        console.error('❌ Yandex Maps API not loaded');
-        return reject(new Error('Yandex Maps API не загружен'));
-      }
+      if (!window.ymaps) return reject(new Error('Yandex Maps API не загружен'));
 
       // @ts-ignore
       const ymaps = window.ymaps;
@@ -91,12 +87,12 @@ export class RouteService {
       )
         .then((route: any) => {
           console.log('✅ Route response received');
+          
+          // 📊 Отладка: посмотрите, что реально отдает Яндекс в консоли
+          console.log('🔍 Raw route metadata:', route.getMetadata?.());
+          
           const routes = route.getRoutes?.() || [route];
-          console.log('🗺️ Routes count:', routes.length);
-
-          if (!routes || routes.length === 0) {
-            return reject(new Error('Маршруты не найдены. Попробуйте выбрать точки ближе друг к другу.'));
-          }
+          if (!routes || routes.length === 0) return reject(new Error('Маршруты не найдены.'));
 
           const options: RouteOption[] = routes.map((r: any, idx: number) => {
             try {
@@ -112,6 +108,20 @@ export class RouteService {
               const timeSec = r.getJamsTime?.() || r.getTime?.() || 0;
               const distM = r.getLength?.() || 0;
 
+              let transfers = 0;
+              let transport_info = '';
+              let departure_stop = '';
+
+              if (req.mode === 'public_transport') {
+                // В бесплатном API v2.1 детали ОТ не экспонируются
+                // Но мы можем рассчитать количество пересадок по сегментам
+                const paths = r.getPaths?.();
+                if (paths?.getLength) {
+                  const segmentsCount = paths.getLength();
+                  transfers = Math.max(0, segmentsCount - 1);
+                }
+              }
+
               return {
                 id: `route_${Date.now()}_${req.mode}_${idx}`,
                 time: this.formatTime(timeSec),
@@ -120,8 +130,12 @@ export class RouteService {
                 distance_meters: distM,
                 geometry: { type: 'LineString' as const, coordinates: coords },
                 steps: [],
-                share_link: `https://yandex.ru/maps/?rtext=${req.from[0]},${req.from[1]}~${req.to[0]},${req.to[1]}&rtt=${rtt}`,
+                share_link: `https://yandex.ru/maps/?rtext=${req.from[0]},${req.from[1]}~${req.to[0]},${req.to[1]}&rtt=mt`,
                 label: this.getLabel(req.mode, idx),
+                transfers,
+                transport_info: transport_info || undefined,
+                departure_stop: departure_stop || undefined,
+                api_limitation: true, // 👈 Включаем профессиональный фолбэк
               };
             } catch (err) {
               console.error('❌ Error parsing route option:', err);
@@ -129,12 +143,7 @@ export class RouteService {
             }
           }).filter((opt: RouteOption | null): opt is RouteOption => opt !== null);
 
-          console.log('🗺️ Parsed options:', options.length);
-
-          if (options.length === 0) {
-            return reject(new Error('Не удалось обработать варианты маршрута'));
-          }
-
+          if (options.length === 0) return reject(new Error('Не удалось обработать варианты маршрута'));
           resolve({ options, selected_index: 0 });
         })
         .catch((err: any) => {
