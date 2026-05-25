@@ -21,7 +21,22 @@ interface MapViewProps {
   analysisRadius?: number | null;
 }
 
-const ISO_COLORS = ['#0057FF33', '#ef444433', '#f59e0b33', '#22c55e33', '#64748b33'];
+// 🔥 Цвета для зон доступности (полупрозрачные для заливки)
+// Формат: #RRGGBB33 (последние 2 символа — альфа-канал прозрачности)
+const ISO_COLOR_MAP: Record<number, string> = {
+  5: '#f59e0b33',   // 🟠 Оранжевый — 5 минут
+  10: '#ef444433',  // 🔴 Красный — 10 минут
+  15: '#0057FF33',  // 🔵 Синий — 15 минут
+  20: '#22c55e33',  // 🟢 Зелёный — 20 минут (запасной)
+};
+
+// Цвета обводки (более непрозрачные)
+const ISO_STROKE_MAP: Record<number, string> = {
+  5: '#f59e0bcc',
+  10: '#ef4444cc',
+  15: '#0057FFcc',
+  20: '#22c55ecc',
+};
 
 export default function MapView({
   features, activeLayers, onMapReady, onMapClick, onObjectSelect,
@@ -38,7 +53,7 @@ export default function MapView({
   const circleRef = useRef<any>(null);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // 🔑 Рефы для колбэков (чтобы клик работал стабильно без пересоздания слушателей)
+  // 🔑 Рефы для колбэков (чтобы клик работал стабильно)
   const onMapClickRef = useRef(onMapClick);
   const onIsochroneRef = useRef(onIsochronePointSelect);
   const onObjectSelectRef = useRef(onObjectSelect);
@@ -61,7 +76,6 @@ export default function MapView({
         type: 'yandex#map',
       });
 
-      // ✅ Надёжный клик через ref (работает всегда, не зависит от перерендеров React)
       mapInstanceRef.current.events.add('click', (e: any) => {
         const coords = e.get('coords') as [number, number];
         onMapClickRef.current?.(coords);
@@ -120,21 +134,51 @@ export default function MapView({
     }
   }, [analysisCenter, analysisRadius]);
 
-  // 5. Изохроны
+  // 🔥 5. Изохроны (цвета привязаны к time_min, а не к индексу)
   useEffect(() => {
     if (!mapInstanceRef.current || !isochroneGeoJSON) return;
     if (isochroneCollectionRef.current) { mapInstanceRef.current.geoObjects.remove(isochroneCollectionRef.current); isochroneCollectionRef.current = null; }
-    const sorted = [...isochroneGeoJSON.features].sort((a: any, b: any) => b.properties.time_min - a.properties.time_min);
+    
+    // Сортируем: большие зоны первыми (чтобы маленькие рисовались поверх)
+    const sorted = [...isochroneGeoJSON.features].sort((a: any, b: any) => 
+      b.properties.time_min - a.properties.time_min
+    );
+    
     const col = new (window as any).ymaps.GeoObjectCollection();
-    sorted.forEach((feat: any, idx: number) => {
+    
+    sorted.forEach((feat: any) => {
       if (feat.geometry?.type !== 'Polygon') return;
-      const rings = feat.geometry.coordinates.map((ring: [number, number][]) => ring.map(([lon, lat]) => [lat, lon]));
-      const color = ISO_COLORS[idx % ISO_COLORS.length];
-      const poly = new (window as any).ymaps.Polygon(rings, { balloonContent: `Зона: ${feat.properties.time_min} мин` }, { fillColor: color, strokeColor: color.replace('33', 'cc'), strokeWidth: 2, opacity: 0.7 });
+      
+      const rings = feat.geometry.coordinates.map((ring: [number, number][]) => 
+        ring.map(([lon, lat]) => [lat, lon])
+      );
+      
+      // 🔥 Получаем цвет по значению time_min (с фолбэком на оранжевый)
+      const timeMin = feat.properties.time_min;
+      const fillColor = ISO_COLOR_MAP[timeMin] || '#f59e0b33';
+      const strokeColor = ISO_STROKE_MAP[timeMin] || '#f59e0bcc';
+      
+      const poly = new (window as any).ymaps.Polygon(rings, {
+        balloonContent: `Зона: ${timeMin} мин`,
+      }, {
+        fillColor,
+        strokeColor,
+        strokeWidth: 2,
+        opacity: 0.7,
+      });
+      
       col.add(poly);
     });
-    mapInstanceRef.current.geoObjects.add(col); isochroneCollectionRef.current = col;
-    return () => { if (isochroneCollectionRef.current) mapInstanceRef.current.geoObjects.remove(isochroneCollectionRef.current); };
+    
+    mapInstanceRef.current.geoObjects.add(col);
+    isochroneCollectionRef.current = col;
+    
+    return () => {
+      if (isochroneCollectionRef.current) {
+        mapInstanceRef.current.geoObjects.remove(isochroneCollectionRef.current);
+        isochroneCollectionRef.current = null;
+      }
+    };
   }, [isochroneGeoJSON]);
 
   // 6. Маркеры
@@ -150,14 +194,50 @@ export default function MapView({
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
+      
+      {/* 🔥 Легенда изохрон с правильными цветами */}
       {isochroneGeoJSON && isochroneGeoJSON.features.length > 0 && (
-        <div style={{ position: 'absolute', bottom: 20, right: 20, background: 'white', padding: '12px 16px', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 1000, fontSize: 13, fontFamily: 'system-ui', minWidth: 180, pointerEvents: 'none' }}>
-          <div style={{ fontWeight: 600, marginBottom: 10, color: '#333', borderBottom: '1px solid #eee', paddingBottom: 8 }}>🚶 Зоны доступности</div>
-          {[...isochroneGeoJSON.features].sort((a: any, b: any) => a.properties.time_min - b.properties.time_min).map((feat: any) => {
-            const idx = [...isochroneGeoJSON.features].sort((a: any, b: any) => a.properties.time_min - b.properties.time_min).findIndex(f => f.properties.time_min === feat.properties.time_min);
-            const color = ISO_COLORS[idx % ISO_COLORS.length];
-            return (<div key={feat.properties.time_min} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}><div style={{ width: 24, height: 24, borderRadius: 4, background: color, border: `2px solid ${color.replace('33', 'cc')}`, flexShrink: 0 }} /><span style={{ color: '#444' }}><strong>{feat.properties.time_min} мин</strong></span></div>);
-          })}
+        <div style={{
+          position: 'absolute',
+          bottom: 20,
+          right: 20,
+          background: 'white',
+          padding: '12px 16px',
+          borderRadius: 8,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          zIndex: 1000,
+          fontSize: 13,
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          minWidth: 180,
+          pointerEvents: 'none',
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 10, color: '#333', borderBottom: '1px solid #eee', paddingBottom: 8 }}>
+            🚶 Зоны доступности
+          </div>
+          
+          {/* Сортируем для легенды: от маленьких к большим (5→10→15) */}
+          {[...isochroneGeoJSON.features]
+            .sort((a: any, b: any) => a.properties.time_min - b.properties.time_min)
+            .map((feat: any) => {
+              const timeMin = feat.properties.time_min;
+              // 🔥 Берём цвет из мапы по значению time_min
+              const fillColor = ISO_COLOR_MAP[timeMin] || '#f59e0b33';
+              const strokeColor = ISO_STROKE_MAP[timeMin] || '#f59e0bcc';
+              
+              return (
+                <div key={timeMin} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                  <div style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 4,
+                    background: fillColor,
+                    border: `2px solid ${strokeColor}`,
+                    flexShrink: 0,
+                  }} />
+                  <span style={{ color: '#444' }}><strong>{timeMin} мин</strong></span>
+                </div>
+              );
+            })}
         </div>
       )}
     </div>
