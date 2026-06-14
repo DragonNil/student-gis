@@ -1,5 +1,6 @@
 // frontend/src/core/services/RouteService.ts
-export type RoutingMode = 'pedestrian' | 'auto' | 'public_transport';
+
+export type RoutingMode = 'pedestrian' | 'auto' | 'transit';
 
 export interface RouteRequest {
   from: [number, number];
@@ -19,45 +20,46 @@ export interface RouteOption {
   label: string;
   transfers: number;
   transport_info?: string;
-  departure_stop?: string;
   api_limitation?: boolean;
 }
 
 export interface RouteResponse {
   options: RouteOption[];
   selected_index: number;
+  segments: any[];
 }
 
 export class RouteService {
   private readonly apiKey: string;
 
+
   constructor(apiKey?: string) {
-    this.apiKey = apiKey || (typeof import.meta !== 'undefined' ? import.meta.env.VITE_YANDEX_MAPS_API_KEY : '') || '';
+    this.apiKey =
+      apiKey ||
+      (typeof import.meta !== 'undefined'
+        ? import.meta.env.VITE_YANDEX_MAPS_API_KEY
+        : '') ||
+      '';
   }
 
   private mapMode(mode: RoutingMode): string {
-    const mapping: Record<RoutingMode, string> = {
-      pedestrian: 'pedestrian',
-      auto: 'auto',
-      public_transport: 'masstransit',
-    };
-    return mapping[mode];
+    return mode;
   }
 
-  // Безопасная конвертация секунд в читаемый вид
   private formatTime(seconds: number): string {
     if (!seconds || seconds <= 0) return '—';
     if (seconds < 60) return `${Math.round(seconds)} сек`;
     if (seconds < 3600) return `${Math.round(seconds / 60)} мин`;
+
     const h = Math.floor(seconds / 3600);
     const m = Math.round((seconds % 3600) / 60);
     return m > 0 ? `${h} ч ${m} мин` : `${h} ч`;
   }
 
-  // Безопасная конвертация метров в читаемый вид
   private formatDistance(meters: number): string {
     if (!meters || meters <= 0) return '—';
     if (meters < 1000) return `${Math.round(meters)} м`;
+
     const km = meters / 1000;
     return `${km.toFixed(1).replace(/\.0$/, '')} км`;
   }
@@ -66,117 +68,182 @@ export class RouteService {
     const labels: Record<RoutingMode, string[]> = {
       pedestrian: ['Пешком', 'Альтернативный', 'Длинный'],
       auto: ['Быстрый', 'Короткий', 'Без платных'],
-      public_transport: ['Быстрый', 'С пересадками', 'Минимум пересадок'],
+      transit: ['Быстрый', 'С пересадками', 'Минимум пересадок'],
     };
+
     return labels[mode][index] || `Вариант ${index + 1}`;
   }
 
   async buildRoute(req: RouteRequest): Promise<RouteResponse> {
     return new Promise((resolve, reject) => {
       // @ts-ignore
-      if (!window.ymaps) return reject(new Error('Yandex Maps API не загружен'));
+      if (!window.ymaps) {
+        return reject(new Error('Yandex Maps API не загружен'));
+      }
 
       // @ts-ignore
       const ymaps = window.ymaps;
-      const rtt = this.mapMode(req.mode);
 
-      console.log(`🗺️ Запрос маршрута [${req.mode}]:`, { from: req.from, to: req.to });
+      const routingMode = this.mapMode(req.mode);
+
+      console.log('🗺️ MultiRoute request:', req);
 
       ymaps.route(
-        [req.from, req.to], 
-        { routingMode: rtt, results: 3, avoidFees: false, avoidTolls: false }
+        [req.from, req.to],
+        {
+          multiRoute: true,
+          routingMode,
+          results: 3,
+          avoidTrafficJams: req.mode === 'auto',
+        }
       )
-        .then((route: any) => {
-          console.log('✅ Ответ получен от Яндекс');
-          const routes = route.getRoutes?.() || [route];
-          if (!routes || routes.length === 0) return reject(new Error('Маршруты не найдены.'));
+      .then((multiRoute: any) => {
+        const routes = multiRoute.getRoutes?.();
 
-          const options: RouteOption[] = [];
+        if (!routes || !routes.getLength?.()) {
+          return reject(new Error('Маршруты не найдены'));
+        }
 
-          routes.forEach((r: any, idx: number) => {
-            try {
-              const path = r.getPaths?.()?.get(0);
-              if (!path) return;
+        const options: RouteOption[] = [];
 
-              // 1. Геометрия
-              const coords: [number, number][] = [];
-              const geoLen = path.geometry.getLength();
-              for (let i = 0; i < geoLen; i++) {
-                const [lat, lon] = path.geometry.get(i);
-                coords.push([lon, lat]);
-              }
+  const segmentsData: any[] = [];
+  routes.each((route: any, idx: number) => {
+  try {
+    const active = route.getActiveRoute?.() || route;
 
-              // 2. Время и Расстояние (используем нативные методы API, они точные!)
-              // Для авто берем время с учетом пробок, если есть, иначе обычное
-              let timeSec = r.getTime?.() || 0;
-              if (req.mode === 'auto') {
-                 timeSec = r.getJamsTime?.() || timeSec;
-              }
-              const distMeters = r.getLength?.() || 0;
+    // ----------------------------
+    // TIME / DISTANCE (FIXED)
+    // ----------------------------
+    const durationObj =
+      active.properties?.get?.("duration");
 
-              // 3. Данные для ОТ (безопасный парсинг, без .getLength() на сегментах)
-              let transfers = 0;
-              let transport_info = '';
-              let departure_stop = '';
+    const distanceObj =
+      active.properties?.get?.("distance");
 
-              if (req.mode === 'public_transport') {
-                const paths = r.getPaths?.();
-                if (paths && paths.getLength) {
-                   // Количество пересадок = количество путей - 1
-                   transfers = Math.max(0, paths.getLength() - 1);
-                   
-                   // Пытаемся найти инфо о транспорте (безопасно)
-                   try {
-                      const firstPath = paths.get(0);
-                      const segments = firstPath.getSegments?.();
-                      if (segments) {
-                         // segments может быть коллекцией или массивом
-                         const segCount = segments.getLength ? segments.getLength() : segments.length;
-                         for(let i=0; i<segCount; i++) {
-                            const seg = segments.get ? segments.get(i) : segments[i];
-                            const meta = seg.getMetadata?.();
-                            if (meta && meta.type === 'transit') {
-                               transport_info = meta.transport?.name || 'Общественный транспорт';
-                               departure_stop = meta.departureStop || 'Остановка';
-                               break; 
-                            }
-                         }
-                      }
-                   } catch (e) {
-                      // Если Яндекс не отдал детали - не страшно, просто оставляем пусто
-                      console.log('ℹ️ Детали ОТ недоступны в бесплатной версии');
-                   }
-                }
-              }
+    const timeSec =
+      Number(durationObj?.value ?? durationObj ?? 0);
 
-              options.push({
-                id: `route_${Date.now()}_${req.mode}_${idx}`,
-                time: this.formatTime(timeSec),
-                distance: this.formatDistance(distMeters),
-                time_seconds: timeSec,
-                distance_meters: distMeters,
-                geometry: { type: 'LineString' as const, coordinates: coords },
-                steps: [],
-                share_link: `https://yandex.ru/maps/?rtext=${req.from[0]},${req.from[1]}~${req.to[0]},${req.to[1]}&rtt=${rtt}`,
-                label: this.getLabel(req.mode, idx),
-                transfers,
-                transport_info: transport_info || undefined,
-                departure_stop: departure_stop || undefined,
-                api_limitation: req.mode === 'public_transport',
-              });
+    const distMeters =
+      Number(distanceObj?.value ?? distanceObj ?? 0);
 
-            } catch (err) {
-              console.error(`❌ Ошибка при обработке варианта ${idx}:`, err);
-            }
-          });
+    // ----------------------------
+    // PATHS
+    // ----------------------------
+    const paths = active.getPaths?.();
 
-          if (options.length === 0) return reject(new Error('Не удалось обработать варианты маршрута'));
-          resolve({ options, selected_index: 0 });
-        })
-        .catch((err: any) => {
-          console.error('❌ Yandex route error:', err);
-          reject(new Error(err.message || 'Не удалось построить маршрут'));
+    const coords: [number, number][] = [];
+
+    if (paths?.each) {
+      paths.each((path: any) => {
+        const segments = path.getSegments?.();
+
+        if (!segments?.each) return;
+
+        segments.each((seg: any) => {
+          // ----------------------------
+          // SAFE GEOMETRY ACCESS
+          // ----------------------------
+          const geom = seg?.geometry;
+
+          if (!geom?.getLength) return;
+
+          const len = geom.getLength();
+
+          for (let i = 0; i < len; i++) {
+            const point = geom.get(i);
+
+            if (!point) continue;
+
+            const lat = point?.[0];
+            const lon = point?.[1];
+
+            if (
+              typeof lat !== "number" ||
+              typeof lon !== "number"
+            ) continue;
+
+            coords.push([lon, lat]);
+          }
         });
+      });
+    }
+
+    // ----------------------------
+    // FALLBACK (if no geometry)
+    // ----------------------------
+    if (coords.length === 0) {
+      const line = active.properties?.get?.("line");
+
+      if (Array.isArray(line)) {
+        line.forEach((p: any) => {
+          if (Array.isArray(p)) {
+            coords.push([p[1], p[0]]);
+          }
+        });
+      }
+    }
+
+    // ----------------------------
+    // TRANSFERS (SAFE)
+    // ----------------------------
+    let transfers = 0;
+
+    if (req.mode === "transit") {
+      const paths = active.getPaths?.();
+
+      paths?.each?.((path: any) => {
+        const segments = path.getSegments?.();
+
+        segments?.each?.((seg: any) => {
+          const type = seg?.properties?.get?.("type");
+
+          if (type === "transfer") {
+            transfers++;
+          }
+        });
+      });
+    }
+
+    // ----------------------------
+    // FINAL PUSH
+    // ----------------------------
+    options.push({
+      id: `route_${Date.now()}_${idx}`,
+      time: this.formatTime(timeSec),
+      distance: this.formatDistance(distMeters),
+      time_seconds: timeSec,
+      distance_meters: distMeters,
+      geometry: {
+        type: "LineString",
+        coordinates: coords,
+      },
+      steps: [],
+      share_link: "",
+      label: this.getLabel(req.mode, idx),
+      transfers,
+      api_limitation: false,
+    });
+
+  } catch (e) {
+    console.error("Route parse error:", e);
+  }
+});
+
+        if (!options.length) {
+          return reject(
+            new Error('Не удалось распарсить маршруты')
+          );
+        }
+
+        resolve({
+          options,
+          selected_index: 0,
+        });
+      })
+      .catch((err: any) => {
+        console.error('Yandex route error:', err);
+        reject(err);
+      });
     });
   }
 }

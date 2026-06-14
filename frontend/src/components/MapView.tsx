@@ -16,7 +16,7 @@ interface MapViewProps {
   isochroneGeoJSON?: IsochroneResponse | null;
   startPoint?: [number, number] | null;
   endPoint?: [number, number] | null;
-  currentMode?: 'pedestrian' | 'auto' | 'public_transport';
+  currentMode?: 'pedestrian' | 'auto' | 'transit';
   analysisCenter?: [number, number] | null;
   analysisRadius?: number | null;
 }
@@ -111,7 +111,7 @@ export default function MapView({
     if (routePolylineRef.current) { mapInstanceRef.current.geoObjects.remove(routePolylineRef.current); routePolylineRef.current = null; }
     const coords = routeGeometry.coordinates.map(([lon, lat]) => [lat, lon] as [number, number]);
     if (coords.length < 2) return;
-    const colors: Record<string, string> = { pedestrian: '#22c55e', auto: '#0057FF', public_transport: '#f59e0b' };
+    const colors: Record<string, string> = { pedestrian: '#22c55e', auto: '#0057FF', transit: '#f59e0b' };
     const polyline = new (window as any).ymaps.Polyline(coords, {}, { strokeColor: colors[currentMode || 'auto'], strokeWidth: 4, strokeOpacity: 0.9 });
     mapInstanceRef.current.geoObjects.add(polyline); routePolylineRef.current = polyline;
     return () => { if (routePolylineRef.current) mapInstanceRef.current.geoObjects.remove(routePolylineRef.current); };

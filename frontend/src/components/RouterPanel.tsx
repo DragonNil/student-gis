@@ -17,7 +17,7 @@ interface RoutePanelProps {
 const MODES: { value: RoutingMode; label: string; emoji: string }[] = [
   { value: 'pedestrian', label: 'Пешком', emoji: '🚶' },
   { value: 'auto', label: 'На авто', emoji: '🚗' },
-  { value: 'public_transport', label: 'Транспорт', emoji: '🚌' },
+  { value: 'transit', label: 'Транспорт', emoji: '🚌' },
 ];
 
 export default function RoutePanel({
@@ -39,7 +39,7 @@ export default function RoutePanel({
   };
 
   const selectedOption = routeResult?.options?.[selectedIdx];
-  const isPT = currentMode === 'public_transport' && selectedOption;
+  const isPT = currentMode === 'transit' && selectedOption;
 
   return (
     <div style={{ background: '#fff', borderRadius: '8px', padding: '16px', marginTop: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>

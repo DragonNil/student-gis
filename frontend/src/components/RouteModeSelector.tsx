@@ -9,7 +9,7 @@ interface Props {
 const MODES: Array<{ value: RoutingMode; label: string; icon: string }> = [
   { value: 'pedestrian', label: '🚶 Пешком', icon: 'pedestrian' },
   { value: 'auto', label: '🚗 На авто', icon: 'auto' },
-  { value: 'public_transport', label: '🚌 Транспорт', icon: 'pt' },
+  { value: 'transit', label: '🚌 Транспорт', icon: 'transit' },
 ];
 
 export default function RouteModeSelector({ mode, onChange }: Props) {

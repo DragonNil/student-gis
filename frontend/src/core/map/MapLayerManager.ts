@@ -59,6 +59,7 @@ export class MapLayerManager {
           balloonContentHeader: name,
           balloonContentBody: `<strong>📍 ${address || '—'}</strong><br/>🕐 ${hours || '—'}<br/>📞 ${phone || '—'}`,
           hintContent: name,
+          iconContent: style.emoji
         },
         { preset: style.icon }
       );
